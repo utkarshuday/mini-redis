@@ -1,18 +1,20 @@
-use std::io::{BufReader, prelude::*};
-use std::net::{TcpListener, TcpStream};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+};
 
-fn handle_connection(mut stream: TcpStream) {
+async fn process(mut socket: TcpStream) {
     let mut buf = [0; 512];
     let response = "+PONG\r\n";
-    let mut reader = BufReader::new(stream.try_clone().unwrap());
+
     loop {
-        match reader.read(&mut buf) {
+        match socket.read(&mut buf).await {
             Ok(_size @ 0) => {
                 println!("Connection closed!");
                 break;
             }
             Ok(_size) => {
-                stream.write_all(response.as_bytes()).unwrap();
+                socket.write_all(response.as_bytes()).await.unwrap();
             }
             Err(e) => {
                 println!("Error: {e}");
@@ -22,18 +24,14 @@ fn handle_connection(mut stream: TcpStream) {
     }
 }
 
-fn main() {
-    let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
-
-    for connection in listener.incoming() {
-        match connection {
-            Ok(stream) => {
-                println!("Accepted a connection");
-                handle_connection(stream);
-            }
-            Err(_) => {
-                println!("Error occured");
-            }
-        }
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    let listener = TcpListener::bind("127.0.0.1:7878").await?;
+    loop {
+        let (socket, _) = listener.accept().await?;
+        println!("Accepted a connection!");
+        tokio::spawn(async move {
+            process(socket).await;
+        });
     }
 }
