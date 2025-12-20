@@ -3,6 +3,21 @@ use tokio::{
     net::{TcpListener, TcpStream},
 };
 
+pub async fn run(listener: TcpListener) {
+    loop {
+        match listener.accept().await {
+            Ok((socket, _)) => {
+                println!("Accepted a connection!");
+                tokio::spawn(process(socket));
+            }
+            Err(e) => {
+                println!("Error: {}", e);
+                continue;
+            }
+        }
+    }
+}
+
 async fn process(mut socket: TcpStream) {
     let mut buf = [0; 512];
     let response = "+PONG\r\n";
@@ -19,23 +34,6 @@ async fn process(mut socket: TcpStream) {
             Err(e) => {
                 println!("Error: {e}");
                 break;
-            }
-        }
-    }
-}
-
-#[tokio::main]
-async fn main() -> std::io::Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:7878").await?;
-    loop {
-        match listener.accept().await {
-            Ok((socket, _)) => {
-                println!("Accepted a connection!");
-                tokio::spawn(process(socket));
-            }
-            Err(e) => {
-                println!("Error: {}", e);
-                continue;
             }
         }
     }

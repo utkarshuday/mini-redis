@@ -3,5 +3,9 @@ name = "mini-redis"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "mini-redis-server"
+path = "src/bin/server.rs"
+
 [dependencies]
 tokio = { version = "1.48.0", features = ["full"] }
