@@ -28,10 +28,15 @@ async fn process(mut socket: TcpStream) {
 async fn main() -> std::io::Result<()> {
     let listener = TcpListener::bind("127.0.0.1:7878").await?;
     loop {
-        let (socket, _) = listener.accept().await?;
-        println!("Accepted a connection!");
-        tokio::spawn(async move {
-            process(socket).await;
-        });
+        match listener.accept().await {
+            Ok((socket, _)) => {
+                println!("Accepted a connection!");
+                tokio::spawn(process(socket));
+            }
+            Err(e) => {
+                println!("Error: {}", e);
+                continue;
+            }
+        }
     }
 }
