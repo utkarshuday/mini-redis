@@ -10,6 +10,7 @@ use tokio_util::codec::Decoder;
 #[derive(Debug, PartialEq)]
 enum RespFrame {
     String(Bytes),
+    NullString,
     Error(Bytes),
     Integer(i64),
     Null,
@@ -47,6 +48,7 @@ impl RespBufSlice {
             b'+' => Self::get_simple_string(buf, pos + 1),
             b'-' => Self::get_error(buf, pos + 1),
             b':' => Self::get_int(buf, pos + 1),
+            b'$' => Self::get_bulk_string(buf, pos + 1),
             _ => Err(RespError::UnknownStartingByte),
         }
     }
@@ -64,6 +66,27 @@ impl RespBufSlice {
     /// Wraps returned word buffer slice into RESP integer type
     fn get_int(buf: &BytesMut, pos: usize) -> Result<Option<(usize, Self)>, RespError> {
         Ok(get_int(buf, pos)?.map(|(end, i)| (end, Self::Integer(i))))
+    }
+
+    fn get_bulk_string(buf: &BytesMut, pos: usize) -> Result<Option<(usize, Self)>, RespError> {
+        match get_int(buf, pos)? {
+            Some((end, -1)) => Ok(Some((end, RespBufSlice::Null))),
+            Some((end, size)) if size >= 0 => {
+                let end_string_pos = end + size as usize;
+                if end_string_pos + 2 > buf.len() {
+                    Ok(None)
+                } else if buf[end_string_pos] == b'\r' && buf[end_string_pos + 1] == b'\n' {
+                    Ok(Some((
+                        end_string_pos + 2,
+                        RespBufSlice::String(BufSlice(end, end_string_pos)),
+                    )))
+                } else {
+                    Err(RespError::BadBulkStringSize(size))
+                }
+            }
+            Some((_end, bad_size)) => Err(RespError::BadBulkStringSize(bad_size)),
+            None => Ok(None),
+        }
     }
 }
 
@@ -109,6 +132,7 @@ enum RespError {
     UnknownStartingByte,
     UnexpectedEnd,
     IOError(std::io::Error),
+    BadBulkStringSize(i64),
 }
 
 impl From<std::io::Error> for RespError {
@@ -192,5 +216,17 @@ mod parser_tests {
         let result = result.unwrap().unwrap();
 
         assert_eq!(result, RespFrame::Integer(1334));
+    }
+
+    #[test]
+    fn test_bulk_string_type() {
+        let mut decoder = Parser;
+
+        let mut buffer = BytesMut::from("$5\r\nHello\r\n");
+
+        let result = decoder.decode(&mut buffer);
+        let result = result.unwrap().unwrap();
+
+        assert_eq!(result, RespFrame::String("Hello".into()));
     }
 }
