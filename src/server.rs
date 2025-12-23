@@ -19,7 +19,7 @@ pub async fn run(listener: TcpListener) {
 }
 
 async fn process(mut socket: TcpStream) {
-    let mut buf = [0; 512];
+    let mut buf = vec![0; 512];
     let response = "+PONG\r\n";
 
     loop {

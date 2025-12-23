@@ -9,3 +9,6 @@ path = "src/bin/server.rs"
 
 [dependencies]
 tokio = { version = "1.48.0", features = ["full"] }
+bytes = "1"
+memchr = "2.7.6"
+tokio-util = { version = "0.7.17", features = ["codec"] }
