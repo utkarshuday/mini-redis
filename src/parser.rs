@@ -4,6 +4,15 @@ use bytes::{Bytes, BytesMut};
 use memchr::memchr;
 use tokio_util::codec::Decoder;
 
+/// Actual data types for frame
+#[derive(Debug, PartialEq)]
+enum RespFrame {
+    String(Bytes),
+    Error(Bytes),
+    Integer(i64),
+    Null,
+}
+
 struct Parser;
 
 impl Decoder for Parser {
@@ -15,7 +24,7 @@ impl Decoder for Parser {
             return Ok(None);
         }
 
-        match parse(src, 0)? {
+        match RespBufSlice::scan_from(src, 0)? {
             Some((pos, buf_slice)) => {
                 let framable_data = src.split_to(pos);
                 Ok(Some(buf_slice.value(&framable_data.freeze())))
@@ -25,11 +34,37 @@ impl Decoder for Parser {
     }
 }
 
-/// Actual data types for frame
-#[derive(Debug, PartialEq)]
-enum RespFrame {
-    String(Bytes),
-    Error(Bytes),
+impl RespBufSlice {
+    /// Parses into a RESP type
+    fn scan_from(buf: &BytesMut, pos: usize) -> Result<Option<(usize, Self)>, RespError> {
+        if buf.len() <= pos {
+            return Ok(None);
+        }
+
+        match buf[pos] {
+            b'+' => Self::simple_string(buf, pos + 1),
+            b'-' => Self::error(buf, pos + 1),
+            _ => Err(RespError::UnknownStartingByte),
+        }
+    }
+
+    /// Wraps returned word buffer slice into RESP simple string type
+    fn simple_string(buf: &BytesMut, pos: usize) -> Result<Option<(usize, Self)>, RespError> {
+        Ok(BufSlice::word(buf, pos).map(|(pos, word)| (pos, RespBufSlice::String(word))))
+    }
+
+    /// Wraps returned word buffer slice into RESP error type
+    fn error(buf: &BytesMut, pos: usize) -> Result<Option<(usize, Self)>, RespError> {
+        Ok(BufSlice::word(buf, pos).map(|(pos, word)| (pos, RespBufSlice::Error(word))))
+    }
+}
+
+/// RESP data type for byte slices
+// Bridge between final redis values and raw bytes
+// which allows to check whether if it follows RESP and parse in just one-pass.
+enum RespBufSlice {
+    String(BufSlice),
+    Error(BufSlice),
     Integer(i64),
     Null,
 }
@@ -44,19 +79,6 @@ impl RespBufSlice {
             Self::Null => RespFrame::Null,
         }
     }
-}
-
-/// Fundamental struct for viewing byte slices
-struct BufSlice(usize, usize);
-
-/// RESP data type for byte slices
-// Bridge between final redis values and raw bytes
-// which allows to check whether if it follows RESP and parse in just one-pass.
-enum RespBufSlice {
-    String(BufSlice),
-    Error(BufSlice),
-    Integer(i64),
-    Null,
 }
 
 /// Error types while parsing a buffer for RESP
@@ -74,7 +96,8 @@ impl From<std::io::Error> for RespError {
     }
 }
 
-type RespResult = Result<Option<(usize, RespBufSlice)>, RespError>;
+/// Fundamental struct for viewing byte slices
+struct BufSlice(usize, usize);
 
 impl BufSlice {
     /// Get a slice of underlying buffer
@@ -86,50 +109,27 @@ impl BufSlice {
     fn as_bytes(&self, buf: &Bytes) -> Bytes {
         buf.slice(self.0..self.1)
     }
-}
 
-/// Get a word from `buf` starting at `pos`
-///
-/// Returns `None` if valid word is not found.
-fn word(buf: &BytesMut, pos: usize) -> Option<(usize, BufSlice)> {
-    // Reached the end of buffer, so can't make a word
-    if buf.len() <= pos {
-        return None;
-    }
-
-    // Find position of b'\r'
-    // memchr is fast
-    memchr(b'\r', &buf[pos..]).and_then(|end| {
-        // Ensure that buffer has b'\n'
-        if pos + end + 1 < buf.len() && buf[pos + end + 1] == b'\n' {
-            Some((pos + end + 2, BufSlice(pos, pos + end)))
-        } else {
-            // Received till b'\r' from client, the next byte b'\n' was never received
-            None
+    /// Get a word from `buf` starting at `pos`
+    ///
+    /// Returns `None` if valid word is not found.
+    fn word(buf: &BytesMut, pos: usize) -> Option<(usize, Self)> {
+        // Reached the end of buffer, so can't make a word
+        if buf.len() <= pos {
+            return None;
         }
-    })
-}
 
-/// Wraps returned word buffer slice into RESP simple string type
-fn simple_string(buf: &BytesMut, pos: usize) -> RespResult {
-    Ok(word(buf, pos).map(|(pos, word)| (pos, RespBufSlice::String(word))))
-}
-
-/// Wraps returned word buffer slice into RESP error type
-fn error(buf: &BytesMut, pos: usize) -> RespResult {
-    Ok(word(buf, pos).map(|(pos, word)| (pos, RespBufSlice::Error(word))))
-}
-
-/// Parses into a RESP type
-fn parse(buf: &BytesMut, pos: usize) -> RespResult {
-    if buf.len() <= pos {
-        return Ok(None);
-    }
-
-    match buf[pos] {
-        b'+' => simple_string(buf, pos + 1),
-        b'-' => error(buf, pos + 1),
-        _ => Err(RespError::UnknownStartingByte),
+        // Find position of b'\r'
+        // memchr is fast
+        memchr(b'\r', &buf[pos..]).and_then(|end| {
+            // Ensure that buffer has b'\n'
+            if pos + end + 1 < buf.len() && buf[pos + end + 1] == b'\n' {
+                Some((pos + end + 2, BufSlice(pos, pos + end)))
+            } else {
+                // Received till b'\r' from client, the next byte b'\n' was never received
+                None
+            }
+        })
     }
 }
 
