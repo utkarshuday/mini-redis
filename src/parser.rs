@@ -7,7 +7,7 @@ use tokio_util::codec::{Decoder, Encoder};
 
 /// Actual data types for frame
 #[derive(Debug, PartialEq)]
-enum RespFrame {
+pub enum RespFrame {
     SimpleString(Bytes),
     BulkString(Bytes),
     Error(Bytes),
@@ -17,7 +17,7 @@ enum RespFrame {
     NullBulkArray,
 }
 
-struct Parser;
+pub struct Parser;
 
 impl Decoder for Parser {
     type Item = RespFrame;
@@ -158,7 +158,46 @@ impl RespBufSlice {
 }
 
 impl RespFrame {
-    fn value(self, dst: &mut BytesMut) {}
+    fn value(self, dst: &mut BytesMut) {
+        match self {
+            Self::SimpleString(bytes) => {
+                dst.extend_from_slice(b"+");
+                dst.extend_from_slice(&bytes);
+                dst.extend_from_slice(b"\r\n");
+            }
+            Self::BulkString(bytes) => {
+                dst.extend_from_slice(b"$");
+                dst.extend_from_slice(bytes.len().to_string().as_bytes());
+                dst.extend_from_slice(b"\r\n");
+                dst.extend_from_slice(&bytes);
+                dst.extend_from_slice(b"\r\n");
+            }
+            Self::Error(bytes) => {
+                dst.extend_from_slice(b"-");
+                dst.extend_from_slice(&bytes);
+                dst.extend_from_slice(b"\r\n");
+            }
+            Self::Integer(num) => {
+                dst.extend_from_slice(b":");
+                dst.extend_from_slice(num.to_string().as_bytes());
+                dst.extend_from_slice(b"\r\n");
+            }
+            Self::NullBulkString => {
+                dst.extend_from_slice(b"$-1\r\n");
+            }
+            Self::NullBulkArray => {
+                dst.extend_from_slice(b"*-1\r\n");
+            }
+            Self::Array(frames) => {
+                dst.extend_from_slice(b"*");
+                dst.extend_from_slice(frames.len().to_string().as_bytes());
+                dst.extend_from_slice(b"\r\n");
+                frames.into_iter().for_each(|frame| {
+                    frame.value(dst);
+                });
+            }
+        }
+    }
 
     fn len(&self) -> usize {
         match self {
@@ -182,14 +221,27 @@ const MAX: usize = 8 * 1024 * 1024; // 8 MB
 
 impl Encoder<RespFrame> for Parser {
     type Error = RespError;
+
     fn encode(&mut self, item: RespFrame, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        let len = item.len();
+
+        if len > MAX {
+            return Err(RespError::IOError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Frame of length {} is too large.", len),
+            )));
+        }
+
+        dst.reserve(len);
+        item.value(dst);
+
         Ok(())
     }
 }
 
 /// Error types while parsing a buffer for RESP
 #[derive(Debug)]
-enum RespError {
+pub enum RespError {
     IntParseFailure,
     UnknownStartingByte,
     UnexpectedEnd,
@@ -353,5 +405,28 @@ mod parser_tests {
 
         assert_eq!(expected_result.len(), expected_len);
         assert_eq!(result, expected_result);
+    }
+
+    #[test]
+    fn test_encoder() {
+        let mut encoder = Parser;
+
+        let frame = RespFrame::Array(vec![
+            RespFrame::Array(vec![
+                RespFrame::Integer(1),
+                RespFrame::Integer(2),
+                RespFrame::Integer(3),
+            ]),
+            RespFrame::Array(vec![
+                RespFrame::SimpleString("Hello".into()),
+                RespFrame::Error("World".into()),
+            ]),
+        ]);
+
+        let mut buffer = BytesMut::new();
+        encoder.encode(frame, &mut buffer).unwrap();
+
+        let val = b"*2\r\n*3\r\n:1\r\n:2\r\n:3\r\n*2\r\n+Hello\r\n-World\r\n";
+        assert_eq!(buffer.as_ref(), val);
     }
 }
