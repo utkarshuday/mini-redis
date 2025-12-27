@@ -1,6 +1,6 @@
 pub mod server;
 
-// mod cmd;
+mod cmd;
 mod connection;
 mod frame;
 
