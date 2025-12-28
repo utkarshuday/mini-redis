@@ -2,13 +2,12 @@ use crate::{cmd::CommandError, frame::FrameValue};
 use bytes::Bytes;
 use std::vec::IntoIter;
 
-#[derive(Default)]
-pub struct Ping {
-    msg: Option<Bytes>,
+pub struct Echo {
+    msg: Bytes,
 }
 
-impl Ping {
-    fn new(msg: Option<Bytes>) -> Self {
+impl Echo {
+    fn new(msg: Bytes) -> Self {
         Self { msg }
     }
 
@@ -17,22 +16,20 @@ impl Ping {
     ) -> Result<Self, CommandError> {
         let result = match frames_iter.next() {
             Some(frame) => match frame {
-                FrameValue::BulkString(msg) => Ok(Ping::new(Some(msg))),
+                FrameValue::BulkString(msg) => Ok(Echo::new(msg)),
                 _ => Err(CommandError::ExpectedBulkString),
             },
-            None => Ok(Ping::default()),
+            None => return Err(CommandError::EndOfStream),
         };
 
         if frames_iter.next().is_some() {
             return Err(CommandError::InvalidCommandFormat);
         }
+
         result
     }
 
     pub(crate) fn response_frame(self) -> FrameValue {
-        match self.msg {
-            Some(msg) => FrameValue::BulkString(msg),
-            None => FrameValue::SimpleString(Bytes::from_static(b"PONG")),
-        }
+        FrameValue::BulkString(self.msg)
     }
 }

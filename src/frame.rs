@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use bytes::{Bytes, BytesMut};
 use memchr::memchr;
 use std::str::from_utf8;
@@ -225,6 +223,7 @@ impl FrameBufSlice {
 }
 
 /// Error types while parsing a buffer for RESP
+// TODO: Use `thiserror` crate to handle this
 #[derive(Debug)]
 pub enum FrameError {
     IntParseFailure,

@@ -13,3 +13,4 @@ bytes = "1"
 memchr = "2.7.6"
 tokio-util = { version = "0.7.17", features = ["codec"] }
 thiserror = "2.0.17"
+futures = "0.3.31"

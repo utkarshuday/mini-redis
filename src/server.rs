@@ -1,7 +1,7 @@
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
-};
+use crate::{cmd::Command, frame::Frame};
+use futures::{SinkExt, StreamExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio_util::codec::Framed;
 
 pub async fn run(listener: TcpListener) {
     loop {
@@ -18,23 +18,21 @@ pub async fn run(listener: TcpListener) {
     }
 }
 
-async fn process(mut socket: TcpStream) {
-    let mut buf = vec![0; 512];
-    let response = "+PONG\r\n";
+// TODO: Handle errors properly
+// When redis-cli connects, our server can't parse that yet so it will give an error on first request
+async fn process(socket: TcpStream) {
+    let mut framed = Framed::with_capacity(socket, Frame, 4096);
 
-    loop {
-        match socket.read(&mut buf).await {
-            Ok(_size @ 0) => {
-                println!("Connection closed!");
-                break;
+    while let Some(request) = framed.next().await {
+        match request {
+            Ok(frame) => {
+                let response = match Command::from_frame(frame) {
+                    Ok(command) => command.response_frame(),
+                    _ => panic!("Unknown error occurred"),
+                };
+                framed.send(response).await.unwrap();
             }
-            Ok(_size) => {
-                socket.write_all(response.as_bytes()).await.unwrap();
-            }
-            Err(e) => {
-                println!("Error: {e}");
-                break;
-            }
+            _ => panic!("Unknown error occurred"),
         }
     }
 }
